@@ -2,3 +2,6 @@
 */.ipynb_checkpoints/
 __pycache__/
 ./figs/idv_galaxies/*.pdf
+
+get_rad.py
+./figs/test_*.pdf
