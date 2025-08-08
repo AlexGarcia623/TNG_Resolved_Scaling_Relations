@@ -1,0 +1,247 @@
+import matplotlib as mpl
+mpl.use('agg')
+
+import numpy as np
+import matplotlib.pyplot as plt
+import glob
+import os
+import sys
+import time
+import h5py
+from matplotlib.colors import LogNorm
+
+import cmasher as cmr
+
+mpl.rcParams['text.usetex'] = True
+mpl.rcParams['font.family'] = 'serif'
+
+fs_og = 25
+mpl.rcParams['font.size'] = fs_og
+mpl.rcParams['axes.linewidth'] = 5
+mpl.rcParams['xtick.direction'] = 'in'
+mpl.rcParams['ytick.direction'] = 'in'
+mpl.rcParams['xtick.minor.visible'] = 'true'
+mpl.rcParams['ytick.minor.visible'] = 'true'
+mpl.rcParams['xtick.major.width'] = 1.5 * 2
+mpl.rcParams['ytick.major.width'] = 1.5 * 2
+mpl.rcParams['xtick.minor.width'] = 1.0 * 2
+mpl.rcParams['ytick.minor.width'] = 1.0 * 2
+mpl.rcParams['xtick.major.size'] = 7.5 * 2
+mpl.rcParams['ytick.major.size'] = 7.5 * 2
+mpl.rcParams['xtick.minor.size'] = 3.5 * 2
+mpl.rcParams['ytick.minor.size'] = 3.5 * 2
+mpl.rcParams['xtick.top'] = True
+mpl.rcParams['ytick.right'] = True
+####################################################################################
+# Initial Condition
+sig_gas0 = 1.0 * 10**9.0
+sig_star0 = 0.0
+
+t_end = 8.0
+nsteps = 10000
+#dt = t_end / nsteps
+t0 = 0.0
+
+####################################################################################
+
+def median_relation(x, y, dx=0.25, up=84, down=16, req=30):    
+    xs = np.arange(np.min(x), np.max(x), dx)
+    
+    median = np.zeros(len(xs))
+    lower  = np.zeros(len(xs))
+    upper  = np.zeros(len(xs))
+    
+    for index, xval in enumerate(xs):
+        within_dx = (x > xval) & (x < xval + dx) 
+        y_within = y[within_dx]
+        
+        if len(y_within) > req:
+            median[index] = np.median(y_within)
+            lower[index] = np.percentile(y_within,down)
+            upper[index] = np.percentile(y_within,up)
+            
+        else:
+            median[index] = np.nan
+            
+    return_mask = ~np.isnan(median)
+            
+    return xs[return_mask], median[return_mask], lower[return_mask], upper[return_mask]
+
+def gas_inflow(sfr, r0, dt):
+    return r0 * sfr * dt
+
+def gas_outflow(sfr, r1, dt):
+    return r1 * sfr * dt
+
+def calc_sfr(sig_gas, efficiency=1.0):
+    # a0 = 4.78 * 10**(-16.0)
+    # alpha = 1.77
+    # return a0 * sig_gas**alpha
+    a0 = 10**(-13.22995892)
+    alpha = 1.52051897
+    return a0*sig_gas**alpha
+
+def one_step(sig_gas, sig_star, metallicity, dt, mu=0.5, Z_pri=0.0, metal_yield=0.1, inflow_ratio=0.0, outflow_ratio=0.0):
+    # SFR from sig_gas
+    sfr = calc_sfr(sig_gas)
+
+    # Initial Metal Mass 
+    metal_mass = sig_gas * metallicity
+
+    # Change in Stellar Mass
+    dm_star = sfr * dt * mu
+    sig_star += dm_star
+
+    # Change in Gas Mass
+    inflow_mass = gas_inflow(sfr, inflow_ratio, dt)
+    outflow_mass = gas_outflow(sfr, outflow_ratio, dt)
+    sig_gas = sig_gas + (inflow_mass - outflow_mass) - dm_star
+
+    # Change in Metal Mass
+    metal_inflow = Z_pri * inflow_mass
+    metal_comsume = metallicity * sfr * dt
+    metal_star_gen = metal_yield * sfr * dt * (1 - mu)
+
+    metal_outflow = metallicity * outflow_mass
+
+    metal_mass = metal_mass - metal_comsume + metal_inflow - metal_outflow + metal_star_gen
+    metallicity = metal_mass / sig_gas
+
+    return sig_gas, sig_star, metallicity, sfr
+
+def evolve(sig_gas0, sig_star0, metallicity0, t_end, nsteps, inflow_ratio=0.0, outflow_ratio=0.0, Z_pri=0.0, metal_yield=0.05):
+    t = 0.0
+    t_end *= 10**9.0
+    dt = ( t_end - t0 ) / nsteps
+    sig_gas = sig_gas0
+    sig_star = sig_star0
+    metallicity = metallicity0
+    
+    gas_list = []
+    star_list = []
+    metal_list = []
+    sfr_list = []
+
+    while t < t_end:
+        sig_gas, sig_star, metallicity, sfr = one_step(sig_gas, sig_star, metallicity, dt, \
+                        inflow_ratio=inflow_ratio, outflow_ratio=outflow_ratio, \
+                        Z_pri=Z_pri, metal_yield=metal_yield)
+        t += dt
+        gas_list.append(sig_gas)
+        star_list.append(sig_star)
+        metal_list.append(metallicity)
+        sfr_list.append(sfr)
+
+    gas_list = np.array(gas_list)
+    star_list = np.array(star_list)
+    metal_list = np.array(metal_list)
+    sfr_list = np.array(sfr_list)
+
+    fgas_list = gas_list / (gas_list + star_list)
+    # fgas_list = gas_list / star_list
+
+    return gas_list, star_list, metal_list, sfr_list
+
+###################################################################################
+data = '../IllustrisTNG_L35n2160TNG.hdf5'
+
+all_sm  = []
+all_sfr = []
+all_gm  = []
+all_total_mass = []
+counter = 0
+
+with h5py.File(data, 'r') as f:
+    all_subhalos = f['snap_99']
+    
+    for key in all_subhalos.keys():
+        this_subhalo = all_subhalos[key]
+        
+        this_sm = np.array(this_subhalo['TotalStellarMass'])
+        
+        this_smsd  = np.array(this_subhalo['StellarMass']).flatten()
+        this_sfrsd = np.array(this_subhalo['StarFormationRate']).flatten()
+        this_gmsd  = np.array(this_subhalo['GasMass']).flatten()
+        
+        if np.any(this_smsd > 10**7) and np.any(this_sfrsd > 10**-4.0):
+            all_sm.extend(this_smsd)
+            all_sfr.extend(this_sfrsd)
+            all_gm.extend(this_gmsd)
+            all_total_mass.extend(np.ones_like(this_smsd)*this_sm)
+            counter += 1
+        
+print('Number of Galaxies in this sample:',counter)
+all_sm  = np.array(all_sm )
+all_sfr = np.array(all_sfr)
+all_gm  = np.array(all_gm)
+all_total_mass = np.array(all_total_mass)
+
+inf_mask  = (np.isfinite(all_sm)) & (np.isfinite(all_sfr))
+alex_mask = (all_sm > 10**7.0) & (all_sfr > 10**-4.0)
+
+all_sm  = all_sm [alex_mask & inf_mask]
+all_sfr = all_sfr[alex_mask & inf_mask]
+all_gm  = all_gm [alex_mask & inf_mask]
+all_total_mass = all_total_mass[alex_mask & inf_mask]
+
+all_sm  = np.log10(all_sm )
+all_sfr = np.log10(all_sfr)
+all_gm  = np.log10(all_gm )
+###################################################################################
+
+ics = [[1.0*10**7.5, 0.0], [1.0*10**7.75, 0.0], [1.0*10**8.0, 0.0], [1.0*10**8.25, 0.0], [1.0*10**8.5, 0.0], \
+       [1.0*10**8.75, 0.0], [1.0*10**9.0, 0.0], [1.0*10**9.25, 0.0], [1.0*10**9.5, 0.0], [1.0*10**9.75, 0.0], [1.0*10**10.0, 0.0]]
+
+fig = plt.figure(figsize=(15.0, 15.0))
+ax = fig.add_axes([0.10, 0.10, 0.85, 0.85])
+
+plt.hist2d(all_sm, all_gm, bins=100, norm='log', cmap='Greys', rasterized=True, alpha=0.5)
+multi_time = []
+
+sm, fg, fg1, fg2 = median_relation(all_sm, all_gm, dx=0.25, req=200)
+
+__CMAP__ = 'cmr.fall'
+
+N = len(ics)
+cmap = cmr.get_sub_cmap(__CMAP__, 0, 0.8, N=N)
+newcolors = np.linspace(0, 1, N)
+col = [ cmap(x) for x in newcolors[::-1] ]
+
+for idx, ic in enumerate(ics):
+        sig_gas0, sig_star0 = ic[0], ic[1]
+        metallicity0 = 0.0
+        fgas_list, star_list, metal_list, sfr_list = evolve(sig_gas0, sig_star0, metallicity0, \
+                                8.0, 16000, inflow_ratio=0.0, outflow_ratio=0.0, metal_yield=0.05)
+        metal_list = np.log10(metal_list * 0.0127 * 0.35 / 16 / 0.75) + 12.0
+        multi_time.append(fgas_list[1999::2000])
+        multi_time.append(star_list[1999::2000])
+        plt.plot(np.log10(star_list), np.log10(fgas_list), '--', lw=5, color=col[idx])
+
+for idx,i in enumerate(range(len(multi_time[0]))):
+        cur_metal, cur_star = [], []
+        for j in range(len(multi_time) // 2):
+                cur_metal.append(multi_time[2*j][i])
+                cur_star.append(multi_time[2*j+1][i])
+        label = str(i+1) + ' Gyr'
+        plt.plot(np.log10(np.array(cur_star)), np.log10(np.array(cur_metal)), lw=5, label=label, color=col[idx])
+
+# mass, sfr, sfr1, sfr2 = median_relation(all_sm, all_fg, dx = 0.25, req=200)
+
+# ax.plot(mass, sfr, color='k', alpha=0.5, lw=8)
+        
+ax.set_xlabel('$\mathrm{log}(\Sigma_{\star} / \mathrm{M}_{\odot}\, \mathrm{kpc}^{-2})$', fontsize=40)
+# ax.set_ylabel('$\mathrm{log}(f_{\mathrm{gas}})$', fontsize=40)
+ax.set_ylabel('$\mathrm{log}(\mathrm{\Sigma}_{\mathrm{gas}} / M_{\odot}\, \mathrm{kpc}^{-2})$', fontsize=40)
+ax.tick_params(labelsize=40)
+# cbar = plt.colorbar(pad=0.03)
+# cbar.set_label('Count', fontsize=50, rotation=90, labelpad=1.1)
+# cbar.ax.tick_params(labelsize=40)
+leg = ax.legend( frameon=False,handletextpad=0.25, labelspacing=0.05,
+                 loc='lower left', fontsize=40 )
+for index, text in enumerate(leg.get_texts()):
+    text.set_color(col[index])
+ax.set_xlim([7.01, 9.49])
+# ax.set_ylim([-2.55, -0.1])
+
+plt.tight_layout()
+plt.savefig('./figs/Figure12.pdf', bbox_inches='tight')
