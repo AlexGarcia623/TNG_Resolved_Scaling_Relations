@@ -143,7 +143,7 @@ all_sm  = all_sm [keep_mask]
 all_sfr = all_sfr[keep_mask]
 
 plt.hist2d(all_sm  , all_sfr, bins=(100,100), cmap=cmr.get_sub_cmap('Greys', 0, 0.8), 
-           rasterized=True, norm='log', alpha=0.5, zorder=2)
+           rasterized=True, norm='log', alpha=0.5, zorder=-1)
 
 mass, sfr, sfr1, sfr2 = median(all_sm, all_sfr)
 

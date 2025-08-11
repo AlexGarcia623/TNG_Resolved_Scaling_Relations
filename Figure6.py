@@ -1,3 +1,4 @@
+import sys
 import h5py
 import numpy as np
 import matplotlib as mpl
@@ -60,23 +61,6 @@ def median_relation(x, y, dx=0.25, up=84, down=16, req=30):
             
     return xs[return_mask], median[return_mask], lower[return_mask], upper[return_mask]
 
-
-def offsets_from_relation(all_m, all_y, dm=0.5):
-    mbins = np.arange(7,10,dm)
-    ybins = np.ones(len(mbins))*np.nan
-    
-    for idx, m in enumerate(mbins):
-        
-        within_dm = (all_m > m) & (all_m < m + dm)
-        
-        if np.sum(within_dm) > 30:
-            ybins[idx] = np.median(all_y[within_dm])
-            
-    relation = interp1d(mbins,ybins,fill_value='extrapolate')
-    offsets = all_y - relation(all_m)
-    
-    return offsets
-
 def get_fixed_SFR_bin(all_m, all_z, all_SFR, current_SFR, dSFR, req=200):
     
     mask = (all_SFR > current_SFR) & (all_SFR < current_SFR + dSFR)
@@ -100,9 +84,6 @@ def get_fixed_SFR_bin(all_m, all_z, all_SFR, current_SFR, dSFR, req=200):
                 worm_y.append( np.nan )
             
     return worm_x, worm_y
-
-fig, axs = plt.subplots(1, 2, figsize=(28,15), sharex=True, sharey=True, 
-                       gridspec_kw=dict(width_ratios=[0.8,1], height_ratios=[1]))
 
 all_z   = []
 all_sm  = []
@@ -155,38 +136,35 @@ z = np.log10(all_sfr[~invalid_pix&inf_mask])
 
 r = all_rad[~invalid_pix&inf_mask]
 
-axs[0].hist2d(x, y, range=[[7.0, 9.5], [8.0, 9.25]], bins=100, norm='log',
-           cmap='Greys',alpha=0.5, rasterized=True)
+fig = plt.figure(figsize=(15.0, 15.0))
+ax  = plt.gca()
 
-dsSFR = 0.67
+dsSFR = 0.75
 sSFR_bins = np.arange(-4,-1,dsSFR)[::-1]
 
 N = len(sSFR_bins)
-cmap = cmr.get_sub_cmap('cmr.pride', 0.2, 0.8, N=N)
+cmap = cmr.get_sub_cmap('copper_r', 0.2, 0.8, N=N)
 newcolors = np.linspace(0, 1, N)
 col = [ cmap(x) for x in newcolors[::-1] ]
 
 mass, metal, metal1, metal2 = median_relation(x, y, dx=0.25, req=200)
 
-axs[0].plot(mass, metal , color='k', lw=5, label='Median rMZR',alpha=0.5)
-axs[0].plot(mass, metal1, color='k', ls='--', lw=5, alpha=0.5)
-axs[0].plot(mass, metal2, color='k', ls='--', lw=5, alpha=0.5)
+ax.plot(mass*100, metal*100 , color='gray', lw=5, label='Median rMZR', alpha=0.9)
+ax.plot(mass, metal , color='gray', lw=5, alpha=0.75)
+ax.plot(mass, metal1, color='gray', ls='--', lw=5, alpha=0.75)
+ax.plot(mass, metal2, color='gray', ls='--', lw=5, alpha=0.75)
 
 for idx, sSFR_bin in enumerate(sSFR_bins):
     worm_x, worm_y = get_fixed_SFR_bin(x,y,z,sSFR_bin,dsSFR)
-    axs[0].plot(worm_x, worm_y, lw=7, color=col[idx],
-             label=f"${sSFR_bin:0.2f}$" + "$\,< \Sigma_{\mathrm{SFR}} <\,$" + f"${(sSFR_bin+dsSFR):0.2f}$")
+    ax.plot(worm_x, worm_y, lw=7, color=col[idx],
+             label=f"${sSFR_bin:0.2f}$" + r"$\,< \log(\Sigma_{\mathrm{SFR}}~[M_\odot/{\rm kpc}^2/{\rm yr}]) <\,$" + f"${(sSFR_bin+dsSFR):0.2f}$")
     
-ax = axs[0]
 
-ax.set_xlabel('$\mathrm{log}(\Sigma_{\star} / \mathrm{M}_{\odot}\, \mathrm{kpc}^{-2})$', fontsize=fs_og)
-ax.set_ylabel('$12 + \mathrm{log}(\mathrm{O}/\mathrm{H})$', fontsize=fs_og)
+ax.set_xlabel(r'$\mathrm{log}(\Sigma_{\star} ~[\mathrm{M}_{\odot}\, \mathrm{kpc}^{-2}])$', fontsize=fs_og)
+ax.set_ylabel(r'$12 + \mathrm{log}(\mathrm{O}/\mathrm{H})~[{\rm dex}]$', fontsize=fs_og)
 ax.tick_params(labelsize=fs_og)
 
-ax.set_ylim([8.00, 9.60])
-ax.set_xlim([7.01, 9.50])
-
-leg = ax.legend( frameon=False,handletextpad=0.25, labelspacing=0.05, fontsize=fs_og, loc='lower right' )
+leg = ax.legend( frameon=False,handletextpad=0.25, labelspacing=0.05, fontsize=32, loc='upper left' )
 
 for index, text in enumerate(leg.get_texts()):
     if index == 0:
@@ -194,122 +172,12 @@ for index, text in enumerate(leg.get_texts()):
     else:
         text.set_color(col[index-1])
 
-offsets_rSFMS = offsets_from_relation(x, z)
-offsets_rMZR  = offsets_from_relation(x, y)
-
-dsSFR = 1
-sSFR_bins = np.arange(-4,0,dsSFR)[::-1]
-
-N = len(sSFR_bins)
-cmap = cmr.get_sub_cmap('copper', 0.2, 0.65, N=N)
-newcolors = np.linspace(0, 1, N)
-col = [ cmap(x) for x in newcolors[::-1] ]
-
-mass, metal, metal1, metal2 = median_relation(x, y, dx=0.25, req=200)
-
-axs[1].plot(mass, metal , color='k', lw=5)
-axs[1].plot(mass, metal1, color='k', ls='--', lw=5)
-axs[1].plot(mass, metal2, color='k', ls='--', lw=5)
-
-# for idx, sSFR_bin in enumerate(sSFR_bins):
-#     worm_x, worm_y = get_fixed_SFR_bin(x,y,z,sSFR_bin,dsSFR)
-#     plt.plot(worm_x, worm_y, lw=7, color=col[idx],
-#              label=f"{sSFR_bin:0.1f}" + "$\,< \Sigma_{\mathrm{SFR}} <\,$" + f"{(sSFR_bin+dsSFR):0.1f}")
-     
 bins=100
-sums  , xbins, ybins = np.histogram2d(x, y, bins=bins, weights=offsets_rSFMS)
-counts,     _,     _ = np.histogram2d(x, y, bins=(xbins,ybins))
+ax.hist2d(x, y, range=[[7.0, 9.5], [8.0, 9.25]], bins=100, norm='log',
+           cmap='Greys',alpha=0.5, rasterized=True)
 
-sums   = np.transpose(sums)
-counts = np.transpose(counts)
-
-valid_bins = counts > 10
-masked_ratio = np.full_like(sums, np.nan)  # Create an array full of NaNs
-masked_ratio[valid_bins] = sums[valid_bins] / counts[valid_bins]  # Only fill valid bins
-
-cmap = cmr.get_sub_cmap('cmr.pride', 0.1, 0.9)
-img = axs[1].pcolor(xbins, ybins, masked_ratio, vmin=-0.5,vmax=0.5, alpha=0.75, cmap=cmap, rasterized=True)
-
-cbar = plt.colorbar(img, ax=axs[1])
-cbar.set_label(r'$\Delta \mathrm{rSFMS}$', rotation=-90, fontsize=fs_og)
-cbar.ax.tick_params(labelsize=40)
-
-ax = axs[1]
-
-ax.set_xlabel('$\mathrm{log}(\Sigma_{\star} / \mathrm{M}_{\odot}\, \mathrm{kpc}^{-2})$', fontsize=fs_og)
-# ax.set_ylabel('$12 + \mathrm{log}(\mathrm{O}/\mathrm{H})$', fontsize=fs_og)
-ax.tick_params(labelsize=fs_og)
-
-ax.set_ylim([8.00-0.2, 9.39-0.2])
+ax.set_ylim([8.00, 9.39])
 ax.set_xlim([7.01, 9.49])
 
-leg = ax.legend( frameon=False,handletextpad=0.25, labelspacing=0.05, fontsize=fs_og, loc='upper left' )
-
-for index, text in enumerate(leg.get_texts()):
-    if index == 0:
-        text.set_color('k')
-    else:
-        text.set_color(col[index-1])
-
-xstart = 0.7
-ystart = 0.225
-xlen = 0.15
-ylen = 0.15
-
-ax_inset = fig.add_axes([xstart, ystart, xlen, ylen])
-
-### Plotting purposes only!! Removing this doesn't change anything
-plot_mask = ((offsets_rSFMS > -2.01) & (offsets_rSFMS < 1.501) &
-             (offsets_rMZR > -0.6) & (offsets_rMZR < 0.6))
-
-bins = 50
-sums  , xbins, ybins = np.histogram2d(offsets_rSFMS[plot_mask], offsets_rMZR[plot_mask], bins=bins, weights=r[plot_mask])
-counts,     _,     _ = np.histogram2d(offsets_rSFMS[plot_mask], offsets_rMZR[plot_mask], bins=(xbins,ybins))
-
-sums   = np.transpose(sums)
-counts = np.transpose(counts)
-
-valid_bins = counts > 10
-masked_ratio = np.full_like(sums, np.nan)  # Create an array full of NaNs
-masked_ratio[valid_bins] = sums[valid_bins] / counts[valid_bins]  # Only fill valid bins
-
-cmap = cmr.get_sub_cmap('magma_r', 0, 0.8)
-# cmap = cmr.get_sub_cmap('cmr.pride', 0.1, 0.9)
-img = plt.pcolor(xbins, ybins, masked_ratio, vmin=0, vmax=15, cmap=cmap, rasterized=True)
-
-cbar = fig.colorbar(img, ax=ax_inset, orientation='vertical')  
-# cbar.set_label('Radius (kpc)', rotation=-90, fontsize=fs_og/1.5)
-ax_inset.text(1.2,0.5,'Radius (kpc)', va='center',transform=ax_inset.transAxes, rotation=-90, fontsize=fs_og/2)
-
-cbar.outline.set_linewidth(1.2)
-cbar.ax.tick_params(axis='y', which='both', width=1, length=5, direction='in', labelsize=fs_og/2)  
-cbar.ax.tick_params(axis='y', which='minor', width=0.5, length=3, direction='in')
-# ax_inset.hist2d(offsets_rSFMS, offsets_rMZR, bins=bins, norm=LogNorm(), cmap='Greys', rasterized=True)
-
-# corr_coeff, p_value = pearsonr(offsets_rSFMS, offsets_rMZR)
-
-# ax_inset.text(0.025,0.85,'$R^2 = %s$' %round(corr_coeff**2,3), transform=ax_inset.transAxes, fontsize=fs_og/1.75)
-
-ax_inset.set_xticks([-2,-1,0,1])
-
-# slope, intercept = np.polyfit(offsets_rSFMS, offsets_rSFMS, 1)
-# _x_ = np.linspace(np.min(offsets_rSFMS),np.max(offsets_rSFMS),100)
-# _y_ = slope * _x_ + intercept
-
-# ax_inset.plot(_x_, _y_, color='r', lw=3)
-
-ax_inset.axhline(0, color='k', linestyle=':')
-ax_inset.axvline(0, color='k', linestyle=':')
-
-ax_inset.set_xlabel('$\Delta \mathrm{rSFMS}$',fontsize=fs_og/2)
-ax_inset.set_ylabel('$\Delta \mathrm{rMZR}$' ,fontsize=fs_og/2)
-    
-ax_inset.spines['bottom'].set_linewidth(1.2); ax_inset.spines['top']  .set_linewidth(1.2)
-ax_inset.spines['left']  .set_linewidth(1.2); ax_inset.spines['right'].set_linewidth(1.2)
-    
-ax_inset.tick_params(axis='both', width=1, length=6, which='major', labelsize=fs_og/2)
-ax_inset.tick_params(axis='both', width=1, length=3, which='minor', labelsize=fs_og/2)
-
 plt.tight_layout()
-plt.subplots_adjust(wspace=0.0)
 plt.savefig('./figs/Figure6.pdf',bbox_inches='tight')

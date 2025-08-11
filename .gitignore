@@ -5,3 +5,7 @@ __pycache__/
 
 get_rad.py
 ./figs/test_*.pdf
+
+./centrals/
+./satellites/
+./deprecated/
